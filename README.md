@@ -2,6 +2,8 @@
 
 An in-progress production-inspired object storage project. The repository includes an authenticated FastAPI gateway, PostgreSQL/Alembic metadata, separate persistent storage-node services, deterministic 4+2 Reed–Solomon stripe logic through `zfec`, capacity-aware weighted rendezvous placement with expiring transactional reservations, registered node membership, repair and rebalance workers, a React dashboard, NGINX routing, Compose, Prometheus/Grafana, and Kubernetes starter manifests.
 
+**[Open the read-only dashboard preview](https://kahil98.github.io/distributed-cloud-storage/)** — this Pages version uses sample data. Uploads, downloads, sign-in, and node controls require the live backend. See below to run the complete stack locally with Docker Compose.
+
 This work is not production-ready. The implementation checklist records completed checks; see [Known limitations](docs/KNOWN_LIMITATIONS.md), [Architecture](docs/ARCHITECTURE.md), and the [demo guide](docs/DEMO_GUIDE.md) for scope and operation.
 
 ## Run the local demonstration
