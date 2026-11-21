@@ -7,18 +7,24 @@ services:
     ports: ["0.0.0.0:8080:80"]
     depends_on: [gateway-1, gateway-2]
     restart: unless-stopped
+  public-tunnel:
+    image: cloudflare/cloudflared:latest
+    command: ["tunnel", "--no-autoupdate", "--url", "http://nginx:80"]
+    profiles: [public-tunnel]
+    depends_on: [nginx]
+    restart: unless-stopped
   gateway-1: &gateway
     build: ./backend
     environment: &gateway-env
       GATEWAY_ID: gateway-1
-      DEMO_MODE: "true"
+      DEMO_MODE: "${DEMO_MODE:-false}"
       DEMO_CONTROLLER_URL: http://demo-controller:8010
       STORAGE_NODES: http://storage-node-1:8001,http://storage-node-2:8001,http://storage-node-3:8001,http://storage-node-4:8001,http://storage-node-5:8001,http://storage-node-6:8001
-      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-demo-token-change-me}
-      JWT_SECRET: ${JWT_SECRET:-replace-this-jwt-secret-before-use}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set INTERNAL_TOKEN in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-this-admin-password}
-      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:-local-demo-password-change-me}@postgres:5432/storage
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/storage
     depends_on:
       migrate: {condition: service_completed_successfully}
       storage-node-1: {condition: service_started}
@@ -39,7 +45,7 @@ services:
     command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
     working_dir: /app
     environment:
-      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:-local-demo-password-change-me}@postgres:5432/storage
+      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/storage
     depends_on:
       postgres: {condition: service_healthy}
     restart: "no"
@@ -47,7 +53,7 @@ services:
     build: ./backend
     command: ["uvicorn", "demo_controller.app:app", "--host", "0.0.0.0", "--port", "8010"]
     environment:
-      DEMO_CONTROL_TOKEN: ${INTERNAL_TOKEN:-local-demo-token-change-me}
+      DEMO_CONTROL_TOKEN: ${INTERNAL_TOKEN:?Set INTERNAL_TOKEN in .env}
       COMPOSE_PROJECT_NAME: distributed-cloud-storage
     volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
     restart: unless-stopped
@@ -55,8 +61,8 @@ services:
     build: ./backend
     command: ["python", "-m", "workers.repair_worker"]
     environment:
-      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:-local-demo-password-change-me}@postgres:5432/storage
-      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-demo-token-change-me}
+      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/storage
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set INTERNAL_TOKEN in .env}
     depends_on:
       postgres: {condition: service_healthy}
       gateway-1: {condition: service_started}
@@ -65,8 +71,8 @@ services:
     build: ./backend
     command: ["python", "-m", "workers.rebalance_worker"]
     environment:
-      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:-local-demo-password-change-me}@postgres:5432/storage
-      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-demo-token-change-me}
+      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/storage
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set INTERNAL_TOKEN in .env}
     depends_on:
       postgres: {condition: service_healthy}
       gateway-1: {condition: service_started}
@@ -75,8 +81,8 @@ services:
     build: ./backend
     command: ["python", "-m", "workers.scrubber"]
     environment:
-      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:-local-demo-password-change-me}@postgres:5432/storage
-      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-demo-token-change-me}
+      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/storage
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set INTERNAL_TOKEN in .env}
       SCRUB_INTERVAL_SECONDS: ${SCRUB_INTERVAL_SECONDS:-300}
     depends_on:
       postgres: {condition: service_healthy}
@@ -85,45 +91,45 @@ services:
   storage-node-1: &storage
     build: ./backend
     command: ["uvicorn", "storage_node.app:app", "--host", "0.0.0.0", "--port", "8001"]
-    environment: {NODE_ID: "storage-node-1", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    environment: {NODE_ID: "storage-node-1", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:?Set INTERNAL_TOKEN in .env}"}
     volumes: ["storage1:/data"]
     restart: unless-stopped
   storage-node-2:
     <<: *storage
-    environment: {NODE_ID: "storage-node-2", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    environment: {NODE_ID: "storage-node-2", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:?Set INTERNAL_TOKEN in .env}"}
     volumes: ["storage2:/data"]
   storage-node-3:
     <<: *storage
-    environment: {NODE_ID: "storage-node-3", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    environment: {NODE_ID: "storage-node-3", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:?Set INTERNAL_TOKEN in .env}"}
     volumes: ["storage3:/data"]
   storage-node-4:
     <<: *storage
-    environment: {NODE_ID: "storage-node-4", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    environment: {NODE_ID: "storage-node-4", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:?Set INTERNAL_TOKEN in .env}"}
     volumes: ["storage4:/data"]
   storage-node-5:
     <<: *storage
-    environment: {NODE_ID: "storage-node-5", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    environment: {NODE_ID: "storage-node-5", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:?Set INTERNAL_TOKEN in .env}"}
     volumes: ["storage5:/data"]
   storage-node-6:
     <<: *storage
-    environment: {NODE_ID: "storage-node-6", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    environment: {NODE_ID: "storage-node-6", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:?Set INTERNAL_TOKEN in .env}"}
     volumes: ["storage6:/data"]
   storage-node-7:
     <<: *storage
     profiles: [scaleout]
-    environment: {NODE_ID: "storage-node-7", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    environment: {NODE_ID: "storage-node-7", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:?Set INTERNAL_TOKEN in .env}"}
     volumes: ["storage7:/data"]
   storage-node-8:
     <<: *storage
     profiles: [scaleout]
-    environment: {NODE_ID: "storage-node-8", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    environment: {NODE_ID: "storage-node-8", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:?Set INTERNAL_TOKEN in .env}"}
     volumes: ["storage8:/data"]
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: storage
       POSTGRES_USER: storage
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-password-change-me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes: ["postgres_data:/var/lib/postgresql/data"]
     healthcheck: {test: ["CMD-SHELL", "pg_isready -U storage -d storage"], interval: 5s, timeout: 3s, retries: 10}
     restart: unless-stopped

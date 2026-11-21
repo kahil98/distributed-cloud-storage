@@ -19,6 +19,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse, FileResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
@@ -43,6 +44,10 @@ _domain_values = os.getenv("NODE_FAILURE_DOMAINS", ",".join(f"{node}=domain-{nod
 FAILURE_DOMAINS = ({part.split("=", 1)[0]: part.split("=", 1)[1] for part in _domain_values if "=" in part}
                    if any("=" in part for part in _domain_values) else dict(zip(NODE_IDS, _domain_values)))
 app = FastAPI(title="Distributed Cloud Storage API", version="0.1.0")
+app.add_middleware(CORSMiddleware, allow_origins=["https://kahil98.github.io"],
+                   allow_credentials=False, allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+                   allow_headers=["Authorization", "Content-Type"],
+                   expose_headers=["X-Recovery-Details"], max_age=3600)
 logger = logging.getLogger("gateway")
 _upload_health_lock = asyncio.Lock()
 _last_upload_health_refresh = 0.0
@@ -508,6 +513,9 @@ def initialize_metadata():
             if admin is None:
                 session.add(User(id=str(uuid.uuid4()), username=username,
                                  password_hash=hash_password(password), role="admin"))
+            elif not verify_password(password, admin.password_hash):
+                # Keep the configured bootstrap credential in sync for existing installs.
+                admin.password_hash = hash_password(password)
 
 
 @app.get("/api/objects")

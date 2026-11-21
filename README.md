@@ -2,7 +2,7 @@
 
 An in-progress production-inspired object storage project. The repository includes an authenticated FastAPI gateway, PostgreSQL/Alembic metadata, separate persistent storage-node services, deterministic 4+2 Reed–Solomon stripe logic through `zfec`, capacity-aware weighted rendezvous placement with expiring transactional reservations, registered node membership, repair and rebalance workers, a React dashboard, NGINX routing, Compose, Prometheus/Grafana, and Kubernetes starter manifests.
 
-**[Open the read-only dashboard preview](https://kahil98.github.io/distributed-cloud-storage/)** — this Pages version uses sample data. Uploads, downloads, sign-in, and node controls require the live backend. See below to run the complete stack locally with Docker Compose.
+**[Open the dashboard preview](https://kahil98.github.io/distributed-cloud-storage/)** — without an API address it shows labeled sample data. For a temporary live class demo, connect GitHub Pages to the local API using the [public testing guide](docs/PUBLIC_TESTING.md).
 
 This work is not production-ready. The implementation checklist records completed checks; see [Known limitations](docs/KNOWN_LIMITATIONS.md), [Architecture](docs/ARCHITECTURE.md), and the [demo guide](docs/DEMO_GUIDE.md) for scope and operation.
 
@@ -12,6 +12,10 @@ This work is not production-ready. The implementation checklist records complete
 2. Start the services: `docker compose up --build`.
 3. Open the dashboard at <http://localhost:8080>. Sign in with `ADMIN_USERNAME` and `ADMIN_PASSWORD`; regular users can create accounts from the sign-in screen.
 4. API documentation: <http://localhost:8080/docs>. Grafana: <http://localhost:3002>. Prometheus: <http://localhost:9091>.
+
+## Temporary public testing
+
+To let visitors use the GitHub Pages frontend while uploads remain in this machine's Docker volumes, use the [public testing guide](docs/PUBLIC_TESTING.md). It starts a temporary HTTPS tunnel to the local app; the computer and Docker must stay on. The generated tunnel URL changes when restarted, so the Pages link must be updated. Do not share the admin password.
 
 The gateway accepts multipart uploads at `POST /api/objects` with a bearer token. The UI handles sign-in, concurrent multi-file uploads with per-file progress/cancellation, listing, download, and deletion. Selecting multiple files starts each file's striping and fragment placement concurrently. Expand **Inspect 4+2 fragment layout** on any file to see each stripe's D1–D4 and P1–P2 fragments, assigned node, size, and checksum. Open **View fragments** on a node to inspect its stored fragment inventory. The topology view highlights a selected stripe's placements. After a download, the recovery panel shows offline fragments, the four fragments used, and any data rebuilt with parity. The parity guide explains the process; the admin event feed records degraded downloads. Admins can browse files by username and set per-user quotas. New accounts default to 5 GiB; admins can set another MiB value or leave the quota unlimited. Administrators can stop or start actual local node containers from the node list; each node's volume is preserved. For API use, obtain an access token with `POST /api/auth/login` (JSON `username` and `password`) and send `Authorization: Bearer <access_token>`.
 
