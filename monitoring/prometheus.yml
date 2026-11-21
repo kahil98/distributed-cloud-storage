@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: gateway-1
+    metrics_path: /metrics
+    static_configs: [{targets: [gateway-1:8000]}]
+  - job_name: gateway-2
+    metrics_path: /metrics
+    static_configs: [{targets: [gateway-2:8000]}]
+  - job_name: storage-nodes
+    metrics_path: /metrics
+    static_configs:
+      - targets: [storage-node-1:8001, storage-node-2:8001, storage-node-3:8001, storage-node-4:8001, storage-node-5:8001, storage-node-6:8001]

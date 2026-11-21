@@ -1,0 +1,218 @@
+apiVersion: v1
+kind: Namespace
+metadata: {name: distributed-storage}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: storage-secrets, namespace: distributed-storage}
+type: Opaque
+stringData:
+  postgres-password: replace-me
+  internal-token: replace-me
+  jwt-secret: replace-me
+  admin-password: replace-me
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: storage-config, namespace: distributed-storage}
+data:
+  ADMIN_USERNAME: admin
+  STORAGE_NODES: http://storage-node-0.storage-node:8001,http://storage-node-1.storage-node:8001,http://storage-node-2.storage-node:8001,http://storage-node-3.storage-node:8001,http://storage-node-4.storage-node:8001,http://storage-node-5.storage-node:8001
+  STORAGE_NODE_IDS: storage-node-0,storage-node-1,storage-node-2,storage-node-3,storage-node-4,storage-node-5
+  NODE_FAILURE_DOMAINS: storage-node-0=rack-a,storage-node-1=rack-b,storage-node-2=rack-c,storage-node-3=rack-d,storage-node-4=rack-e,storage-node-5=rack-f
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres, namespace: distributed-storage}
+spec:
+  selector: {app: postgres}
+  ports: [{port: 5432, targetPort: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: postgres, namespace: distributed-storage}
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - {name: POSTGRES_DB, value: storage}
+            - {name: POSTGRES_USER, value: storage}
+            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: storage-secrets, key: postgres-password}}}
+          ports: [{containerPort: 5432}]
+          volumeMounts: [{name: pgdata, mountPath: /var/lib/postgresql/data}]
+          resources: {requests: {cpu: 200m, memory: 512Mi}, limits: {cpu: "2", memory: 2Gi}}
+          readinessProbe: {exec: {command: ["sh", "-c", "pg_isready -U storage -d storage"]}, initialDelaySeconds: 5, periodSeconds: 5}
+  volumeClaimTemplates:
+    - metadata: {name: pgdata}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 20Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: storage-node, namespace: distributed-storage}
+spec:
+  clusterIP: None
+  selector: {app: storage-node}
+  ports: [{name: http, port: 8001, targetPort: 8001}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: storage-node, namespace: distributed-storage}
+spec:
+  serviceName: storage-node
+  replicas: 6
+  selector: {matchLabels: {app: storage-node}}
+  template:
+    metadata: {labels: {app: storage-node}}
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: storage-node
+          image: distributed-storage-backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ["uvicorn", "storage_node.app:app", "--host", "0.0.0.0", "--port", "8001"]
+          env:
+            - {name: NODE_ID, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: DATA_DIR, value: /data}
+            - {name: INTERNAL_TOKEN, valueFrom: {secretKeyRef: {name: storage-secrets, key: internal-token}}}
+          ports: [{containerPort: 8001}]
+          volumeMounts: [{name: data, mountPath: /data}]
+          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "2", memory: 2Gi}}
+          readinessProbe: {httpGet: {path: /health, port: 8001}, initialDelaySeconds: 3, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /health, port: 8001}, initialDelaySeconds: 10, periodSeconds: 15}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: {matchLabels: {app: storage-node}}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 100Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: gateway, namespace: distributed-storage}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: gateway}}
+  template:
+    metadata: {labels: {app: gateway}}
+    spec:
+      containers:
+        - name: gateway
+          image: distributed-storage-backend:latest
+          envFrom: [{configMapRef: {name: storage-config}}]
+          env:
+            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: storage-secrets, key: postgres-password}}}
+            - {name: DATABASE_URL, value: "postgresql://storage:$(POSTGRES_PASSWORD)@postgres:5432/storage"}
+            - {name: INTERNAL_TOKEN, valueFrom: {secretKeyRef: {name: storage-secrets, key: internal-token}}}
+            - {name: JWT_SECRET, valueFrom: {secretKeyRef: {name: storage-secrets, key: jwt-secret}}}
+            - {name: ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: storage-secrets, key: admin-password}}}
+            - {name: GATEWAY_ID, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+          ports: [{containerPort: 8000}]
+          resources: {requests: {cpu: 200m, memory: 256Mi}, limits: {cpu: "2", memory: 2Gi}}
+          readinessProbe: {httpGet: {path: /health, port: 8000}, initialDelaySeconds: 10, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /health, port: 8000}, initialDelaySeconds: 15, periodSeconds: 15}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: gateway, namespace: distributed-storage}
+spec:
+  selector: {app: gateway}
+  ports: [{port: 8000, targetPort: 8000}]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: gateway, namespace: distributed-storage}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: gateway}
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource: {name: cpu, target: {type: Utilization, averageUtilization: 70}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: repair-worker, namespace: distributed-storage}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: repair-worker}}
+  template:
+    metadata: {labels: {app: repair-worker}}
+    spec:
+      containers:
+        - name: repair-worker
+          image: distributed-storage-backend:latest
+          command: ["python", "-m", "workers.repair_worker"]
+          envFrom: [{configMapRef: {name: storage-config}}]
+          env:
+            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: storage-secrets, key: postgres-password}}}
+            - {name: DATABASE_URL, value: "postgresql://storage:$(POSTGRES_PASSWORD)@postgres:5432/storage"}
+            - {name: INTERNAL_TOKEN, valueFrom: {secretKeyRef: {name: storage-secrets, key: internal-token}}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: rebalance-worker, namespace: distributed-storage}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: rebalance-worker}}
+  template:
+    metadata: {labels: {app: rebalance-worker}}
+    spec:
+      containers:
+        - name: rebalance-worker
+          image: distributed-storage-backend:latest
+          command: ["python", "-m", "workers.rebalance_worker"]
+          envFrom: [{configMapRef: {name: storage-config}}]
+          env:
+            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: storage-secrets, key: postgres-password}}}
+            - {name: DATABASE_URL, value: "postgresql://storage:$(POSTGRES_PASSWORD)@postgres:5432/storage"}
+            - {name: INTERNAL_TOKEN, valueFrom: {secretKeyRef: {name: storage-secrets, key: internal-token}}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: frontend, namespace: distributed-storage}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: frontend}}
+  template:
+    metadata: {labels: {app: frontend}}
+    spec:
+      containers:
+        - name: frontend
+          image: distributed-storage-frontend:latest
+          ports: [{containerPort: 80}]
+          resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 500m, memory: 256Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: frontend, namespace: distributed-storage}
+spec:
+  selector: {app: frontend}
+  ports: [{port: 80, targetPort: 80}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: storage, namespace: distributed-storage}
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: storage.local
+      http:
+        paths:
+          - {path: /api, pathType: Prefix, backend: {service: {name: gateway, port: {number: 8000}}}}
+          - {path: /docs, pathType: Prefix, backend: {service: {name: gateway, port: {number: 8000}}}}
+          - {path: /openapi.json, pathType: Exact, backend: {service: {name: gateway, port: {number: 8000}}}}
+          - {path: /health, pathType: Exact, backend: {service: {name: gateway, port: {number: 8000}}}}
+          - {path: /, pathType: Prefix, backend: {service: {name: frontend, port: {number: 80}}}}

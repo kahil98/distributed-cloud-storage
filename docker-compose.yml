@@ -1,0 +1,157 @@
+name: distributed-cloud-storage
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: infrastructure/nginx/Dockerfile
+    ports: ["0.0.0.0:8080:80"]
+    depends_on: [gateway-1, gateway-2]
+    restart: unless-stopped
+  gateway-1: &gateway
+    build: ./backend
+    environment: &gateway-env
+      GATEWAY_ID: gateway-1
+      DEMO_MODE: "true"
+      DEMO_CONTROLLER_URL: http://demo-controller:8010
+      STORAGE_NODES: http://storage-node-1:8001,http://storage-node-2:8001,http://storage-node-3:8001,http://storage-node-4:8001,http://storage-node-5:8001,http://storage-node-6:8001
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-demo-token-change-me}
+      JWT_SECRET: ${JWT_SECRET:-replace-this-jwt-secret-before-use}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-this-admin-password}
+      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:-local-demo-password-change-me}@postgres:5432/storage
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      storage-node-1: {condition: service_started}
+      storage-node-2: {condition: service_started}
+      storage-node-3: {condition: service_started}
+      storage-node-4: {condition: service_started}
+      storage-node-5: {condition: service_started}
+      storage-node-6: {condition: service_started}
+      demo-controller: {condition: service_started}
+    restart: unless-stopped
+  gateway-2:
+    <<: *gateway
+    environment:
+      <<: *gateway-env
+      GATEWAY_ID: gateway-2
+  migrate:
+    build: ./backend
+    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    working_dir: /app
+    environment:
+      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:-local-demo-password-change-me}@postgres:5432/storage
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+  demo-controller:
+    build: ./backend
+    command: ["uvicorn", "demo_controller.app:app", "--host", "0.0.0.0", "--port", "8010"]
+    environment:
+      DEMO_CONTROL_TOKEN: ${INTERNAL_TOKEN:-local-demo-token-change-me}
+      COMPOSE_PROJECT_NAME: distributed-cloud-storage
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+    restart: unless-stopped
+  repair-worker:
+    build: ./backend
+    command: ["python", "-m", "workers.repair_worker"]
+    environment:
+      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:-local-demo-password-change-me}@postgres:5432/storage
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-demo-token-change-me}
+    depends_on:
+      postgres: {condition: service_healthy}
+      gateway-1: {condition: service_started}
+    restart: unless-stopped
+  rebalance-worker:
+    build: ./backend
+    command: ["python", "-m", "workers.rebalance_worker"]
+    environment:
+      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:-local-demo-password-change-me}@postgres:5432/storage
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-demo-token-change-me}
+    depends_on:
+      postgres: {condition: service_healthy}
+      gateway-1: {condition: service_started}
+    restart: unless-stopped
+  integrity-scrubber:
+    build: ./backend
+    command: ["python", "-m", "workers.scrubber"]
+    environment:
+      DATABASE_URL: postgresql://storage:${POSTGRES_PASSWORD:-local-demo-password-change-me}@postgres:5432/storage
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-demo-token-change-me}
+      SCRUB_INTERVAL_SECONDS: ${SCRUB_INTERVAL_SECONDS:-300}
+    depends_on:
+      postgres: {condition: service_healthy}
+      gateway-1: {condition: service_started}
+    restart: unless-stopped
+  storage-node-1: &storage
+    build: ./backend
+    command: ["uvicorn", "storage_node.app:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment: {NODE_ID: "storage-node-1", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    volumes: ["storage1:/data"]
+    restart: unless-stopped
+  storage-node-2:
+    <<: *storage
+    environment: {NODE_ID: "storage-node-2", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    volumes: ["storage2:/data"]
+  storage-node-3:
+    <<: *storage
+    environment: {NODE_ID: "storage-node-3", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    volumes: ["storage3:/data"]
+  storage-node-4:
+    <<: *storage
+    environment: {NODE_ID: "storage-node-4", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    volumes: ["storage4:/data"]
+  storage-node-5:
+    <<: *storage
+    environment: {NODE_ID: "storage-node-5", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    volumes: ["storage5:/data"]
+  storage-node-6:
+    <<: *storage
+    environment: {NODE_ID: "storage-node-6", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    volumes: ["storage6:/data"]
+  storage-node-7:
+    <<: *storage
+    profiles: [scaleout]
+    environment: {NODE_ID: "storage-node-7", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    volumes: ["storage7:/data"]
+  storage-node-8:
+    <<: *storage
+    profiles: [scaleout]
+    environment: {NODE_ID: "storage-node-8", DATA_DIR: "/data", INTERNAL_TOKEN: "${INTERNAL_TOKEN:-local-demo-token-change-me}"}
+    volumes: ["storage8:/data"]
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: storage
+      POSTGRES_USER: storage
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-password-change-me}
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U storage -d storage"], interval: 5s, timeout: 3s, retries: 10}
+    restart: unless-stopped
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    ports: ["127.0.0.1:9091:9090"]
+    volumes: ["./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro", "prometheus_data:/prometheus"]
+    restart: unless-stopped
+  grafana:
+    image: grafana/grafana:11.4.0
+    ports: ["127.0.0.1:3002:3000"]
+    environment: {GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:-change-this-grafana-password}"}
+    volumes:
+      - "grafana_data:/var/lib/grafana"
+      - "./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro"
+      - "./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro"
+    depends_on: [prometheus]
+    restart: unless-stopped
+volumes:
+  postgres_data: {}
+  storage1: {}
+  storage2: {}
+  storage3: {}
+  storage4: {}
+  storage5: {}
+  storage6: {}
+  storage7: {}
+  storage8: {}
+  prometheus_data: {}
+  grafana_data: {}
